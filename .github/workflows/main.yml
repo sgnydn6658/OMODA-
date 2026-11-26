@@ -8,8 +8,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -19,10 +17,1469 @@ jobs:
         with:
           gradle-version: "8.14.3"
 
+      - name: Proje dosyalarini olustur
+        run: |
+          mkdir -p proje && cd proje
+          mkdir -p "$(dirname 'settings.gradle.kts')"
+          cat > 'settings.gradle.kts' <<'KODSONU'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "AracEkranVideo"
+          include(":app")
+          KODSONU
+          mkdir -p "$(dirname 'build.gradle.kts')"
+          cat > 'build.gradle.kts' <<'KODSONU'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          KODSONU
+          mkdir -p "$(dirname 'gradle.properties')"
+          cat > 'gradle.properties' <<'KODSONU'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          KODSONU
+          mkdir -p "$(dirname 'app/build.gradle.kts')"
+          cat > 'app/build.gradle.kts' <<'KODSONU'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.aracekran.video"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.aracekran.video"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      // Kendi imza anahtarınız yoksa debug anahtarıyla imzalanır (kurulabilir APK üretir).
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              // Google'ın resmi Android for Cars kütüphanesi (telefonda çalışır, araca bir şey yüklemez)
+              implementation("androidx.car.app:app:1.4.0")
+              // Android Auto (telefon yansıtma) desteği + araç hızı okuma
+              implementation("androidx.car.app:app-projected:1.4.0")
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.lifecycle:lifecycle-common:2.6.2")
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/AndroidManifest.xml')"
+          cat > 'app/src/main/AndroidManifest.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <!-- Park kilidi: telefon GPS'i ile hız (araç hızı okunamazsa yedek) -->
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <!-- Park kilidi: Android Auto üzerinden araç hızı -->
+              <uses-permission android:name="com.google.android.gms.permission.CAR_SPEED" />
+              <!-- Araç ekranında kendi görüntümüzü çizebilmek için (Android for Cars) -->
+              <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
+              <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@android:style/Theme.DeviceDefault.Light.DarkActionBar">
+
+                  <meta-data
+                      android:name="com.google.android.gms.car.application"
+                      android:resource="@xml/automotive_app_desc" />
+                  <meta-data
+                      android:name="androidx.car.app.minCarApiLevel"
+                      android:value="5" />
+
+                  <service
+                      android:name=".car.VideoCarAppService"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="androidx.car.app.CarAppService" />
+                          <category android:name="androidx.car.app.category.NAVIGATION" />
+                      </intent-filter>
+                  </service>
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <!-- YouTube vb. uygulamalardan "Paylaş" ile link gönderebilmek için -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="text/plain" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/AppState.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/AppState.kt' <<'KODSONU'
+          package com.aracekran.video
+
+          import android.os.Handler
+          import android.os.Looper
+          import java.util.concurrent.CopyOnWriteArraySet
+
+          /** Aracın durumuna göre video görüntüsünün açık olup olmayacağı. */
+          enum class DriveState {
+              /** Araç duruyor: görüntü açık. */
+              PARKED,
+              /** Araç hareket halinde: görüntü kapalı, ses devam eder. */
+              MOVING,
+              /** Hız okunamıyor: güvenlik için görüntü kapalı. */
+              UNKNOWN
+          }
+
+          /**
+           * Telefon arayüzü (MainActivity) ile araç ekranı (car paketi) arasında
+           * paylaşılan durum. Hepsi aynı uygulama süreci içinde çalışır.
+           */
+          object AppState {
+              private val main = Handler(Looper.getMainLooper())
+
+              /** Araç ekranında açık olan / açılacak son adres. */
+              @Volatile
+              var lastUrl: String? = null
+                  private set
+
+              @Volatile
+              var driveState: DriveState = DriveState.UNKNOWN
+                  private set
+
+              @Volatile
+              var carConnected: Boolean = false
+                  private set
+
+              fun interface UrlListener { fun onOpenUrl(url: String) }
+              fun interface StateListener { fun onStateChanged() }
+              fun interface SettingsListener { fun onSettingsChanged() }
+
+              private val urlListeners = CopyOnWriteArraySet<UrlListener>()
+              private val stateListeners = CopyOnWriteArraySet<StateListener>()
+              private val settingsListeners = CopyOnWriteArraySet<SettingsListener>()
+
+              fun addUrlListener(l: UrlListener) = urlListeners.add(l)
+              fun removeUrlListener(l: UrlListener) = urlListeners.remove(l)
+              fun addStateListener(l: StateListener) = stateListeners.add(l)
+              fun removeStateListener(l: StateListener) = stateListeners.remove(l)
+              fun addSettingsListener(l: SettingsListener) = settingsListeners.add(l)
+              fun removeSettingsListener(l: SettingsListener) = settingsListeners.remove(l)
+
+              /** Araç ekranında bir adres aç (telefondan ya da araç ekranındaki listeden). */
+              fun openUrl(url: String) {
+                  lastUrl = url
+                  main.post { urlListeners.forEach { it.onOpenUrl(url) } }
+              }
+
+              /** Araç ekranındaki tarayıcı sayfa değiştirdiğinde adresi kaydeder (yeniden açmayı tetiklemez). */
+              fun rememberUrl(url: String) {
+                  lastUrl = url
+              }
+
+              fun updateDriveState(state: DriveState) {
+                  if (driveState == state) return
+                  driveState = state
+                  main.post { stateListeners.forEach { it.onStateChanged() } }
+              }
+
+              fun updateCarConnected(connected: Boolean) {
+                  carConnected = connected
+                  main.post { stateListeners.forEach { it.onStateChanged() } }
+              }
+
+              fun notifySettingsChanged() {
+                  main.post { settingsListeners.forEach { it.onSettingsChanged() } }
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/MainActivity.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/MainActivity.kt' <<'KODSONU'
+          package com.aracekran.video
+
+          import android.Manifest
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.content.ComponentName
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.View
+          import android.view.inputmethod.EditorInfo
+          import android.widget.Button
+          import android.widget.CheckBox
+          import android.widget.EditText
+          import android.widget.LinearLayout
+          import android.widget.RadioGroup
+          import android.widget.TextView
+          import android.widget.Toast
+
+          /** Telefondaki ekran: adres gönderme, site listesi, ayarlar ve kurulum yardımı. */
+          class MainActivity : Activity() {
+
+              private lateinit var status: TextView
+              private lateinit var bookmarkList: LinearLayout
+              private lateinit var btnPermission: Button
+
+              private val stateListener = AppState.StateListener { updateStatus() }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  status = findViewById(R.id.status)
+                  bookmarkList = findViewById(R.id.bookmarkList)
+                  btnPermission = findViewById(R.id.btnPermission)
+
+                  val urlInput = findViewById<EditText>(R.id.urlInput)
+                  val open = {
+                      val url = Prefs.normalizeUrl(urlInput.text.toString())
+                      if (url.isNotEmpty()) sendToCar(url)
+                  }
+                  findViewById<Button>(R.id.btnOpen).setOnClickListener { open() }
+                  urlInput.setOnEditorActionListener { _, actionId, _ ->
+                      if (actionId == EditorInfo.IME_ACTION_GO) { open(); true } else false
+                  }
+
+                  btnPermission.setOnClickListener {
+                      requestPermissions(
+                          arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                          1
+                      )
+                  }
+
+                  val bmName = findViewById<EditText>(R.id.bmName)
+                  val bmUrl = findViewById<EditText>(R.id.bmUrl)
+                  findViewById<Button>(R.id.btnAddBookmark).setOnClickListener {
+                      val url = Prefs.normalizeUrl(bmUrl.text.toString())
+                      val name = bmName.text.toString().trim().ifEmpty { url }
+                      if (url.isEmpty()) return@setOnClickListener
+                      val list = Prefs.bookmarks(this)
+                      list.add(Bookmark(name, url))
+                      Prefs.saveBookmarks(this, list)
+                      bmName.text.clear()
+                      bmUrl.text.clear()
+                      renderBookmarks()
+                  }
+
+                  val zoomGroup = findViewById<RadioGroup>(R.id.zoomGroup)
+                  zoomGroup.check(
+                      when (Prefs.textZoom(this)) {
+                          100 -> R.id.zoom100
+                          150 -> R.id.zoom150
+                          else -> R.id.zoom125
+                      }
+                  )
+                  zoomGroup.setOnCheckedChangeListener { _, id ->
+                      Prefs.setTextZoom(
+                          this, when (id) {
+                              R.id.zoom100 -> 100
+                              R.id.zoom150 -> 150
+                              else -> 125
+                          }
+                      )
+                      AppState.notifySettingsChanged()
+                  }
+
+                  val desktop = findViewById<CheckBox>(R.id.desktopMode)
+                  desktop.isChecked = Prefs.desktopMode(this)
+                  desktop.setOnCheckedChangeListener { _, checked ->
+                      Prefs.setDesktopMode(this, checked)
+                      AppState.notifySettingsChanged()
+                  }
+
+                  findViewById<Button>(R.id.btnOpenAA).setOnClickListener { openAndroidAutoSettings() }
+
+                  renderBookmarks()
+                  handleShareIntent(intent)
+              }
+
+              override fun onNewIntent(intent: Intent) {
+                  super.onNewIntent(intent)
+                  handleShareIntent(intent)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  AppState.addStateListener(stateListener)
+                  updateStatus()
+              }
+
+              override fun onPause() {
+                  super.onPause()
+                  AppState.removeStateListener(stateListener)
+              }
+
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  updateStatus()
+                  AppState.notifySettingsChanged() // araç bağlıysa GPS hemen devreye girsin
+              }
+
+              /** YouTube vb. uygulamalarda "Paylaş → Araç Ekran Video" ile gelen linki araca gönder. */
+              private fun handleShareIntent(intent: Intent?) {
+                  if (intent?.action != Intent.ACTION_SEND) return
+                  val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+                  val link = Regex("https?://\\S+").find(text)?.value ?: return
+                  sendToCar(link)
+              }
+
+              private fun sendToCar(url: String) {
+                  AppState.openUrl(url)
+                  val msg = if (AppState.carConnected) "Araç ekranına gönderildi"
+                  else "Araç bağlı değil. Bağlandığında bu adres açılacak."
+                  Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+              }
+
+              private fun hasLocation(): Boolean =
+                  checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+              private fun updateStatus() {
+                  val car = if (AppState.carConnected) "Araç ekranı: BAĞLI" else "Araç ekranı: bağlı değil"
+                  val drive = when (AppState.driveState) {
+                      DriveState.PARKED -> "Araç duruyor: görüntü AÇIK"
+                      DriveState.MOVING -> "Araç hareket halinde: görüntü KAPALI"
+                      DriveState.UNKNOWN -> "Araç hızı bilinmiyor: görüntü KAPALI"
+                  }
+                  val perm = if (hasLocation()) "Konum izni: verildi" else "Konum izni: VERİLMEDİ"
+                  status.text = if (AppState.carConnected) "$car\n$drive\n$perm" else "$car\n$perm"
+                  btnPermission.visibility = if (hasLocation()) View.GONE else View.VISIBLE
+              }
+
+              private fun renderBookmarks() {
+                  bookmarkList.removeAllViews()
+                  val list = Prefs.bookmarks(this)
+                  list.forEachIndexed { index, bm ->
+                      val row = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                      }
+                      val openBtn = Button(this).apply {
+                          text = bm.name
+                          isAllCaps = false
+                          setOnClickListener { sendToCar(bm.url) }
+                      }
+                      val delBtn = Button(this).apply {
+                          text = "Sil"
+                          setOnClickListener {
+                              AlertDialog.Builder(this@MainActivity)
+                                  .setMessage("\"${bm.name}\" silinsin mi?")
+                                  .setPositiveButton("Sil") { _, _ ->
+                                      val l = Prefs.bookmarks(this@MainActivity)
+                                      if (index < l.size) l.removeAt(index)
+                                      Prefs.saveBookmarks(this@MainActivity, l)
+                                      renderBookmarks()
+                                  }
+                                  .setNegativeButton("Vazgeç", null)
+                                  .show()
+                          }
+                      }
+                      row.addView(openBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                      row.addView(delBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                      bookmarkList.addView(row)
+                  }
+              }
+
+              private fun openAndroidAutoSettings() {
+                  val attempts = listOf(
+                      Intent().setComponent(
+                          ComponentName(
+                              "com.google.android.projection.gearhead",
+                              "com.google.android.apps.auto.carservice.settings.SettingsActivity"
+                          )
+                      ),
+                      Intent("com.google.android.projection.gearhead.SETTINGS"),
+                      packageManager.getLaunchIntentForPackage("com.google.android.projection.gearhead")
+                  )
+                  for (i in attempts) {
+                      if (i == null) continue
+                      try {
+                          startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                          return
+                      } catch (_: Exception) {
+                      }
+                  }
+                  Toast.makeText(this, "Ayarlar → Bağlı cihazlar → Android Auto yolunu izleyin", Toast.LENGTH_LONG).show()
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/Prefs.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/Prefs.kt' <<'KODSONU'
+          package com.aracekran.video
+
+          import android.content.Context
+          import android.net.Uri
+          import org.json.JSONArray
+          import org.json.JSONObject
+
+          data class Bookmark(val name: String, val url: String)
+
+          /** Kayıtlı siteler ve ayarlar (telefonda saklanır). */
+          object Prefs {
+              private const val FILE = "arac_ekran_video"
+              private const val KEY_BOOKMARKS = "bookmarks"
+              private const val KEY_TEXT_ZOOM = "text_zoom"
+              private const val KEY_DESKTOP = "desktop_mode"
+
+              val DEFAULT_BOOKMARKS = listOf(
+                  Bookmark("YouTube", "https://m.youtube.com/"),
+                  Bookmark("Google", "https://www.google.com/")
+              )
+
+              private fun sp(ctx: Context) = ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+              fun bookmarks(ctx: Context): MutableList<Bookmark> {
+                  val raw = sp(ctx).getString(KEY_BOOKMARKS, null) ?: return DEFAULT_BOOKMARKS.toMutableList()
+                  return try {
+                      val arr = JSONArray(raw)
+                      MutableList(arr.length()) { i ->
+                          val o = arr.getJSONObject(i)
+                          Bookmark(o.getString("name"), o.getString("url"))
+                      }
+                  } catch (e: Exception) {
+                      DEFAULT_BOOKMARKS.toMutableList()
+                  }
+              }
+
+              fun saveBookmarks(ctx: Context, list: List<Bookmark>) {
+                  val arr = JSONArray()
+                  list.forEach { arr.put(JSONObject().put("name", it.name).put("url", it.url)) }
+                  sp(ctx).edit().putString(KEY_BOOKMARKS, arr.toString()).apply()
+              }
+
+              fun homeUrl(ctx: Context): String = bookmarks(ctx).firstOrNull()?.url ?: DEFAULT_BOOKMARKS[0].url
+
+              /** Yazı/sayfa büyüklüğü yüzdesi (100 = normal). */
+              fun textZoom(ctx: Context): Int = sp(ctx).getInt(KEY_TEXT_ZOOM, 125)
+              fun setTextZoom(ctx: Context, value: Int) = sp(ctx).edit().putInt(KEY_TEXT_ZOOM, value).apply()
+
+              /** Masaüstü sitesi modu (bazı siteler geniş ekranda daha iyi görünür). */
+              fun desktopMode(ctx: Context): Boolean = sp(ctx).getBoolean(KEY_DESKTOP, false)
+              fun setDesktopMode(ctx: Context, value: Boolean) = sp(ctx).edit().putBoolean(KEY_DESKTOP, value).apply()
+
+              /**
+               * Yazılan metni adrese çevirir: "youtube.com" -> https://youtube.com,
+               * adres değilse Google'da arar.
+               */
+              fun normalizeUrl(input: String): String {
+                  val t = input.trim()
+                  if (t.isEmpty()) return t
+                  if (t.startsWith("http://", true) || t.startsWith("https://", true)) return t
+                  if (!t.contains(' ') && t.contains('.')) return "https://$t"
+                  return "https://www.google.com/search?q=" + Uri.encode(t)
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/car/BrowserScreen.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/car/BrowserScreen.kt' <<'KODSONU'
+          package com.aracekran.video.car
+
+          import androidx.car.app.CarContext
+          import androidx.car.app.Screen
+          import androidx.car.app.model.Action
+          import androidx.car.app.model.ActionStrip
+          import androidx.car.app.model.CarIcon
+          import androidx.car.app.model.ItemList
+          import androidx.car.app.model.ListTemplate
+          import androidx.car.app.model.Row
+          import androidx.car.app.model.Template
+          import androidx.car.app.navigation.model.NavigationTemplate
+          import androidx.core.graphics.drawable.IconCompat
+          import com.aracekran.video.AppState
+          import com.aracekran.video.Prefs
+          import com.aracekran.video.R
+
+          /**
+           * Araç ekranındaki ana görünüm: arka planda web sayfası (WebSurfaceRenderer çizer),
+           * üstte Android Auto'nun kendi düğmeleri.
+           */
+          class BrowserScreen(
+              carContext: CarContext,
+              private val renderer: WebSurfaceRenderer
+          ) : Screen(carContext) {
+
+              override fun onGetTemplate(): Template {
+                  // Navigasyon şablonu üst şeritte en fazla 1 yazılı düğmeye izin verir; diğerleri simge.
+                  val actions = ActionStrip.Builder()
+                      .addAction(iconAction(R.drawable.ic_back) { renderer.goBack() })
+                      .addAction(iconAction(R.drawable.ic_home) { renderer.goHome() })
+                      .addAction(iconAction(R.drawable.ic_refresh) { renderer.reload() })
+                      .addAction(textAction(R.string.car_sites) { screenManager.push(SitesScreen(carContext)) })
+                      .build()
+
+                  // Sağdaki küçük düğmeler: kaydırma modu (PAN) + sayfa yukarı/aşağı
+                  val mapActions = ActionStrip.Builder()
+                      .addAction(Action.PAN)
+                      .addAction(iconAction(R.drawable.ic_up) { renderer.scrollPage(-1) })
+                      .addAction(iconAction(R.drawable.ic_down) { renderer.scrollPage(1) })
+                      .build()
+
+                  return NavigationTemplate.Builder()
+                      .setActionStrip(actions)
+                      .setMapActionStrip(mapActions)
+                      .build()
+              }
+
+              private fun textAction(titleRes: Int, onClick: () -> Unit): Action =
+                  Action.Builder()
+                      .setTitle(carContext.getString(titleRes))
+                      .setOnClickListener { onClick() }
+                      .build()
+
+              private fun iconAction(iconRes: Int, onClick: () -> Unit): Action =
+                  Action.Builder()
+                      .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, iconRes)).build())
+                      .setOnClickListener { onClick() }
+                      .build()
+          }
+
+          /** Telefonda kayıtlı sitelerin listesi (araç ekranından seçilir). */
+          class SitesScreen(carContext: CarContext) : Screen(carContext) {
+
+              @Suppress("DEPRECATION")
+              override fun onGetTemplate(): Template {
+                  val list = ItemList.Builder()
+                  val bookmarks = Prefs.bookmarks(carContext)
+                  if (bookmarks.isEmpty()) {
+                      list.addItem(Row.Builder().setTitle("Telefondan site ekleyin").build())
+                  }
+                  bookmarks.forEach { bm ->
+                      list.addItem(
+                          Row.Builder()
+                              .setTitle(bm.name)
+                              .addText(bm.url)
+                              .setOnClickListener {
+                                  AppState.openUrl(bm.url)
+                                  screenManager.pop()
+                              }
+                              .build()
+                      )
+                  }
+                  return ListTemplate.Builder()
+                      .setTitle(carContext.getString(R.string.car_sites_title))
+                      .setHeaderAction(Action.BACK)
+                      .setSingleList(list.build())
+                      .build()
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/car/DriveMonitor.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/car/DriveMonitor.kt' <<'KODSONU'
+          package com.aracekran.video.car
+
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.content.pm.PackageManager
+          import android.location.Location
+          import android.location.LocationListener
+          import android.location.LocationManager
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.os.SystemClock
+          import android.util.Log
+          import androidx.car.app.CarContext
+          import androidx.car.app.hardware.CarHardwareManager
+          import androidx.car.app.hardware.common.CarValue
+          import androidx.car.app.hardware.common.OnCarDataAvailableListener
+          import androidx.car.app.hardware.info.Speed
+          import androidx.core.content.ContextCompat
+          import com.aracekran.video.DriveState
+
+          /**
+           * Aracın durup durmadığını izler. İki kaynak kullanır:
+           *  1) Android Auto'nun araçtan aldığı hız bilgisi (varsa)
+           *  2) Telefonun GPS hızı (yedek)
+           *
+           * Kural (güvenli taraf): Hiçbir kaynaktan taze hız gelmiyorsa ya da herhangi bir
+           * kaynak hareket gösteriyorsa görüntü KAPALI. Görüntü ancak tüm taze kaynaklar
+           * en az 3 saniye boyunca "duruyor" dediğinde açılır.
+           */
+          class DriveMonitor(
+              private val carContext: CarContext,
+              private val onChange: (DriveState) -> Unit
+          ) {
+              companion object {
+                  private const val TAG = "DriveMonitor"
+                  /** Bunun üstü kesin hareket: ~7 km/s */
+                  private const val MOVING_MS = 2.0f
+                  /** Bunun altı durma: ~3,6 km/s (GPS durağanken de biraz oynar) */
+                  private const val STILL_MS = 1.0f
+                  /** Veri bu süreden eskiyse yok sayılır */
+                  private const val FRESH_MS = 5_000L
+                  /** Açmadan önce bu kadar süre durmuş olmalı */
+                  private const val STILL_HOLD_MS = 3_000L
+              }
+
+              private val handler = Handler(Looper.getMainLooper())
+
+              private var carSpeed: Float? = null
+              private var carSpeedTime = 0L
+              private var gpsSpeed: Float? = null
+              private var gpsSpeedTime = 0L
+              private var stillSince = 0L
+
+              var state: DriveState = DriveState.UNKNOWN
+                  private set
+
+              private var running = false
+              private var carInfoRegistered = false
+              private var gpsRegistered = false
+
+              private val speedListener = OnCarDataAvailableListener<Speed> { speed ->
+                  val v: CarValue<Float> = speed.rawSpeedMetersPerSecond
+                  val value = v.value
+                  if (v.status == CarValue.STATUS_SUCCESS && value != null) {
+                      carSpeed = kotlin.math.abs(value)
+                      carSpeedTime = SystemClock.elapsedRealtime()
+                  }
+              }
+
+              private val locationListener = object : LocationListener {
+                  override fun onLocationChanged(location: Location) {
+                      if (location.hasSpeed()) {
+                          gpsSpeed = location.speed
+                          gpsSpeedTime = SystemClock.elapsedRealtime()
+                      }
+                  }
+                  // Eski Android sürümlerinde bu metotlar zorunlu
+                  @Deprecated("Deprecated in Java")
+                  override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                  override fun onProviderEnabled(provider: String) {}
+                  override fun onProviderDisabled(provider: String) {}
+              }
+
+              private val tick = object : Runnable {
+                  override fun run() {
+                      evaluate()
+                      if (running) handler.postDelayed(this, 1_000L)
+                  }
+              }
+
+              fun start() {
+                  if (running) return
+                  running = true
+                  registerCarSpeed()
+                  registerGps()
+                  handler.post(tick)
+              }
+
+              /** Konum izni sonradan verilirse GPS'i tekrar dene. */
+              fun retryGps() {
+                  if (running && !gpsRegistered) registerGps()
+              }
+
+              fun stop() {
+                  running = false
+                  handler.removeCallbacks(tick)
+                  if (carInfoRegistered) {
+                      try {
+                          carContext.getCarService(CarHardwareManager::class.java)
+                              .carInfo.removeSpeedListener(speedListener)
+                      } catch (e: Exception) {
+                          Log.w(TAG, "removeSpeedListener", e)
+                      }
+                      carInfoRegistered = false
+                  }
+                  if (gpsRegistered) {
+                      try {
+                          val lm = carContext.getSystemService(LocationManager::class.java)
+                          lm?.removeUpdates(locationListener)
+                      } catch (e: Exception) {
+                          Log.w(TAG, "removeUpdates", e)
+                      }
+                      gpsRegistered = false
+                  }
+              }
+
+              private fun registerCarSpeed() {
+                  try {
+                      val hw = carContext.getCarService(CarHardwareManager::class.java)
+                      hw.carInfo.addSpeedListener(ContextCompat.getMainExecutor(carContext), speedListener)
+                      carInfoRegistered = true
+                  } catch (e: Exception) {
+                      // Araç/Android Auto hız vermiyorsa GPS ile devam edilir.
+                      Log.w(TAG, "Araç hızı okunamıyor, GPS kullanılacak", e)
+                  }
+              }
+
+              @SuppressLint("MissingPermission")
+              private fun registerGps() {
+                  val granted = ContextCompat.checkSelfPermission(
+                      carContext, Manifest.permission.ACCESS_FINE_LOCATION
+                  ) == PackageManager.PERMISSION_GRANTED
+                  if (!granted) return
+                  try {
+                      val lm = carContext.getSystemService(LocationManager::class.java) ?: return
+                      if (lm.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+                          lm.requestLocationUpdates(
+                              LocationManager.GPS_PROVIDER, 1_000L, 0f, locationListener, Looper.getMainLooper()
+                          )
+                          gpsRegistered = true
+                      }
+                  } catch (e: Exception) {
+                      Log.w(TAG, "GPS başlatılamadı", e)
+                  }
+              }
+
+              private fun evaluate() {
+                  val now = SystemClock.elapsedRealtime()
+                  val fresh = buildList {
+                      carSpeed?.let { if (now - carSpeedTime < FRESH_MS) add(it) }
+                      gpsSpeed?.let { if (now - gpsSpeedTime < FRESH_MS) add(it) }
+                  }
+
+                  val newState = when {
+                      fresh.isEmpty() -> {
+                          stillSince = 0L
+                          DriveState.UNKNOWN
+                      }
+                      fresh.any { it > MOVING_MS } -> {
+                          stillSince = 0L
+                          DriveState.MOVING
+                      }
+                      fresh.all { it < STILL_MS } -> {
+                          if (stillSince == 0L) stillSince = now
+                          if (now - stillSince >= STILL_HOLD_MS) DriveState.PARKED
+                          else if (state == DriveState.PARKED) DriveState.PARKED
+                          else DriveState.MOVING
+                      }
+                      // Arada kalan hız (yavaş kayma): park halindeyse hareket say, değilse olduğu gibi kalsın.
+                      else -> {
+                          stillSince = 0L
+                          if (state == DriveState.PARKED) DriveState.MOVING else state
+                      }
+                  }
+
+                  if (newState != state) {
+                      state = newState
+                      onChange(newState)
+                  }
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/car/VideoCarAppService.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/car/VideoCarAppService.kt' <<'KODSONU'
+          package com.aracekran.video.car
+
+          import android.content.Intent
+          import androidx.car.app.AppManager
+          import androidx.car.app.CarAppService
+          import androidx.car.app.Screen
+          import androidx.car.app.Session
+          import androidx.car.app.validation.HostValidator
+          import androidx.lifecycle.DefaultLifecycleObserver
+          import androidx.lifecycle.LifecycleOwner
+          import com.aracekran.video.AppState
+          import com.aracekran.video.DriveState
+
+          /**
+           * Android Auto bu servise bağlanır. Servis telefonda çalışır; araç tarafına
+           * hiçbir şey kurulmaz.
+           */
+          class VideoCarAppService : CarAppService() {
+
+              // Uygulama Play Store dışından kurulacağı için tüm Android Auto sürümlerine izin veriyoruz.
+              override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+
+              @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+              override fun onCreateSession(): Session = BrowserSession()
+          }
+
+          class BrowserSession : Session() {
+
+              override fun onCreateScreen(intent: Intent): Screen {
+                  val renderer = WebSurfaceRenderer(carContext)
+                  carContext.getCarService(AppManager::class.java).setSurfaceCallback(renderer)
+
+                  val monitor = DriveMonitor(carContext) { state ->
+                      renderer.applyDriveState(state)
+                      AppState.updateDriveState(state)
+                  }
+                  renderer.applyDriveState(DriveState.UNKNOWN)
+                  monitor.start()
+                  AppState.updateCarConnected(true)
+
+                  // Telefonda konum izni sonradan verilirse GPS'i hemen başlat
+                  val settingsListener = AppState.SettingsListener { monitor.retryGps() }
+                  AppState.addSettingsListener(settingsListener)
+
+                  lifecycle.addObserver(object : DefaultLifecycleObserver {
+                      override fun onResume(owner: LifecycleOwner) {
+                          monitor.retryGps()
+                      }
+
+                      override fun onDestroy(owner: LifecycleOwner) {
+                          AppState.removeSettingsListener(settingsListener)
+                          monitor.stop()
+                          renderer.release()
+                          AppState.updateDriveState(DriveState.UNKNOWN)
+                          AppState.updateCarConnected(false)
+                      }
+                  })
+
+                  return BrowserScreen(carContext, renderer)
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/java/com/aracekran/video/car/WebSurfaceRenderer.kt')"
+          cat > 'app/src/main/java/com/aracekran/video/car/WebSurfaceRenderer.kt' <<'KODSONU'
+          package com.aracekran.video.car
+
+          import android.annotation.SuppressLint
+          import android.app.Presentation
+          import android.graphics.Color
+          import android.graphics.Rect
+          import android.hardware.display.DisplayManager
+          import android.hardware.display.VirtualDisplay
+          import android.net.Uri
+          import android.os.SystemClock
+          import android.util.Log
+          import android.util.TypedValue
+          import android.view.Gravity
+          import android.view.InputDevice
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.ViewGroup
+          import android.webkit.WebChromeClient
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.FrameLayout
+          import android.widget.TextView
+          import androidx.car.app.CarContext
+          import androidx.car.app.SurfaceCallback
+          import androidx.car.app.SurfaceContainer
+          import com.aracekran.video.AppState
+          import com.aracekran.video.DriveState
+          import com.aracekran.video.Prefs
+          import com.aracekran.video.R
+
+          /**
+           * Android Auto'nun verdiği çizim yüzeyine (Surface) bir sanal ekran bağlar,
+           * o sanal ekranda tam ekran bir WebView gösterir. Araç ekranındaki dokunmalar
+           * (tıklama, kaydırma) WebView'a iletilir.
+           *
+           * Her şey telefonda çalışır; araca sadece hazır görüntü gider (Android Auto'nun
+           * kendi yansıtma bağlantısı üzerinden).
+           */
+          class WebSurfaceRenderer(private val carContext: CarContext) : SurfaceCallback {
+
+              companion object {
+                  private const val TAG = "WebSurfaceRenderer"
+                  private const val DESKTOP_UA =
+                      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+              }
+
+              private var virtualDisplay: VirtualDisplay? = null
+              private var presentation: Presentation? = null
+              private var root: FrameLayout? = null
+              private var webView: WebView? = null
+              private var overlay: TextView? = null
+              private var customView: View? = null
+              private var customCallback: WebChromeClient.CustomViewCallback? = null
+
+              private var surfaceWidth = 0
+              private var surfaceHeight = 0
+              private var visibleArea: Rect? = null
+
+              private var driveState: DriveState = DriveState.UNKNOWN
+
+              private val urlListener = AppState.UrlListener { url -> webView?.loadUrl(url) }
+              private val settingsListener = AppState.SettingsListener { applySettings() }
+
+              init {
+                  AppState.addUrlListener(urlListener)
+                  AppState.addSettingsListener(settingsListener)
+              }
+
+              // ---------------------------------------------------------------- Yüzey
+
+              override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
+                  val surface = surfaceContainer.surface ?: return
+                  destroyDisplay()
+
+                  surfaceWidth = surfaceContainer.width
+                  surfaceHeight = surfaceContainer.height
+                  if (surfaceWidth <= 0 || surfaceHeight <= 0) return
+
+                  try {
+                      val dm = carContext.getSystemService(DisplayManager::class.java)
+                      val vd = dm.createVirtualDisplay(
+                          "AracEkranVideo",
+                          surfaceWidth, surfaceHeight, surfaceContainer.dpi,
+                          surface,
+                          0 // özel (private) sanal ekran: sadece bu uygulama kullanır
+                      )
+                      virtualDisplay = vd
+
+                      val p = Presentation(
+                          carContext.applicationContext,
+                          vd.display,
+                          android.R.style.Theme_Black_NoTitleBar_Fullscreen
+                      )
+                      buildViews(p)
+                      p.show()
+                      presentation = p
+                  } catch (e: Exception) {
+                      Log.e(TAG, "Araç ekranı oluşturulamadı", e)
+                      destroyDisplay()
+                  }
+              }
+
+              override fun onVisibleAreaChanged(visibleArea: Rect) {
+                  this.visibleArea = Rect(visibleArea)
+                  applyPadding()
+              }
+
+              override fun onStableAreaChanged(stableArea: Rect) {
+                  // Görünür alan yeterli; ayrıca bir işlem gerekmiyor.
+              }
+
+              override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
+                  destroyDisplay()
+              }
+
+              // ---------------------------------------------------------------- Dokunma
+
+              override fun onClick(x: Float, y: Float) {
+                  if (driveState != DriveState.PARKED) return
+                  val target = presentation?.window?.decorView ?: return
+                  val down = SystemClock.uptimeMillis()
+                  val evDown = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0)
+                  val evUp = MotionEvent.obtain(down, down + 50, MotionEvent.ACTION_UP, x, y, 0)
+                  evDown.source = InputDevice.SOURCE_TOUCHSCREEN
+                  evUp.source = InputDevice.SOURCE_TOUCHSCREEN
+                  target.dispatchTouchEvent(evDown)
+                  target.dispatchTouchEvent(evUp)
+                  evDown.recycle()
+                  evUp.recycle()
+              }
+
+              override fun onScroll(distanceX: Float, distanceY: Float) {
+                  if (driveState != DriveState.PARKED || customView != null) return
+                  js("window.scrollBy(${distanceX.toInt()}, ${distanceY.toInt()});")
+              }
+
+              override fun onFling(velocityX: Float, velocityY: Float) {
+                  if (driveState != DriveState.PARKED || customView != null) return
+                  // Hızla savurmayı yumuşak bir kaydırmaya çevir (yön ters: parmak yukarı = sayfa aşağı)
+                  val dx = (-velocityX * 0.25f).toInt()
+                  val dy = (-velocityY * 0.25f).toInt()
+                  js("window.scrollBy({left:$dx, top:$dy, behavior:'smooth'});")
+              }
+
+              override fun onScale(focusX: Float, focusY: Float, scaleFactor: Float) {
+                  if (driveState != DriveState.PARKED) return
+                  val wv = webView ?: return
+                  if (scaleFactor > 1.02f) wv.zoomIn() else if (scaleFactor < 0.98f) wv.zoomOut()
+              }
+
+              // ---------------------------------------------------------------- Komutlar (araç ekranı düğmeleri)
+
+              fun goBack() {
+                  if (customView != null) {
+                      customCallback?.onCustomViewHidden()
+                      hideCustomView()
+                      return
+                  }
+                  val wv = webView ?: return
+                  if (wv.canGoBack()) wv.goBack()
+              }
+
+              fun goHome() {
+                  webView?.loadUrl(Prefs.homeUrl(carContext))
+              }
+
+              fun reload() {
+                  webView?.reload()
+              }
+
+              /** direction: -1 yukarı, +1 aşağı */
+              fun scrollPage(direction: Int) {
+                  if (driveState != DriveState.PARKED || customView != null) return
+                  js("window.scrollBy({top: ${direction} * window.innerHeight * 0.7, behavior:'smooth'});")
+              }
+
+              fun applyDriveState(state: DriveState) {
+                  driveState = state
+                  updateOverlay()
+              }
+
+              fun release() {
+                  AppState.removeUrlListener(urlListener)
+                  AppState.removeSettingsListener(settingsListener)
+                  destroyDisplay()
+              }
+
+              // ---------------------------------------------------------------- İç işler
+
+              @SuppressLint("SetJavaScriptEnabled")
+              private fun buildViews(p: Presentation) {
+                  val ctx = p.context
+                  val frame = FrameLayout(ctx).apply { setBackgroundColor(Color.BLACK) }
+
+                  val wv = WebView(ctx).apply {
+                      setBackgroundColor(Color.BLACK)
+                      settings.apply {
+                          javaScriptEnabled = true
+                          domStorageEnabled = true
+                          mediaPlaybackRequiresUserGesture = false
+                          loadWithOverviewMode = true
+                          useWideViewPort = true
+                          builtInZoomControls = true
+                          displayZoomControls = false
+                          setSupportMultipleWindows(false)
+                          mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                      }
+                      webViewClient = object : WebViewClient() {
+                          override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                              val scheme = request.url.scheme?.lowercase()
+                              // Sadece web adreslerini aç; "intent://", "vnd.youtube://" gibi
+                              // uygulama açtırma bağlantılarını yok say (araç ekranında başka uygulama açılamaz).
+                              return scheme != "http" && scheme != "https"
+                          }
+
+                          override fun onPageFinished(view: WebView, url: String) {
+                              AppState.rememberUrl(url)
+                          }
+                      }
+                      webChromeClient = object : WebChromeClient() {
+                          override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                              showCustomView(view, callback)
+                          }
+
+                          override fun onHideCustomView() {
+                              hideCustomView()
+                          }
+                      }
+                  }
+
+                  val lock = TextView(ctx).apply {
+                      setBackgroundColor(Color.BLACK)
+                      setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
+                      setPadding(48, 48, 48, 48)
+                      isClickable = true // alttaki sayfaya dokunma geçmesin
+                  }
+
+                  frame.addView(wv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                  frame.addView(lock, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                  p.setContentView(frame)
+
+                  root = frame
+                  webView = wv
+                  overlay = lock
+
+                  applySettings()
+                  applyPadding()
+                  updateOverlay()
+
+                  val start = AppState.lastUrl ?: Prefs.homeUrl(carContext)
+                  wv.loadUrl(start)
+              }
+
+              private fun applySettings() {
+                  val wv = webView ?: return
+                  wv.settings.textZoom = Prefs.textZoom(carContext)
+                  val desktop = Prefs.desktopMode(carContext)
+                  val wantedUa = if (desktop) DESKTOP_UA else null
+                  if (wv.settings.userAgentString != (wantedUa ?: WebSettings.getDefaultUserAgent(carContext))) {
+                      wv.settings.userAgentString = wantedUa
+                      if (wv.url != null) wv.reload()
+                  }
+              }
+
+              /** Android Auto'nun düğmeleri sayfanın üstüne binmesin diye kenar boşluğu bırak. */
+              private fun applyPadding() {
+                  val frame = root ?: return
+                  val area = visibleArea
+                  if (area == null || area.isEmpty || surfaceWidth == 0) {
+                      frame.setPadding(0, 0, 0, 0)
+                      return
+                  }
+                  frame.setPadding(
+                      area.left.coerceAtLeast(0),
+                      area.top.coerceAtLeast(0),
+                      (surfaceWidth - area.right).coerceAtLeast(0),
+                      (surfaceHeight - area.bottom).coerceAtLeast(0)
+                  )
+              }
+
+              private fun showCustomView(view: View, callback: WebChromeClient.CustomViewCallback) {
+                  val frame = root ?: return
+                  if (customView != null) {
+                      callback.onCustomViewHidden()
+                      return
+                  }
+                  customView = view
+                  customCallback = callback
+                  view.setBackgroundColor(Color.BLACK)
+                  frame.addView(view, frame.childCount - 1, // kilit katmanının altına ekle
+                      FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                  webView?.visibility = View.INVISIBLE
+              }
+
+              private fun hideCustomView() {
+                  val frame = root
+                  customView?.let { frame?.removeView(it) }
+                  customView = null
+                  customCallback = null
+                  webView?.visibility = View.VISIBLE
+              }
+
+              private fun updateOverlay() {
+                  val lock = overlay ?: return
+                  when (driveState) {
+                      DriveState.PARKED -> lock.visibility = View.GONE
+                      DriveState.MOVING -> {
+                          lock.setText(R.string.lock_moving)
+                          lock.visibility = View.VISIBLE
+                      }
+                      DriveState.UNKNOWN -> {
+                          lock.setText(R.string.lock_unknown)
+                          lock.visibility = View.VISIBLE
+                      }
+                  }
+              }
+
+              private fun js(script: String) {
+                  webView?.evaluateJavascript(script, null)
+              }
+
+              private fun destroyDisplay() {
+                  customCallback?.onCustomViewHidden()
+                  customView = null
+                  customCallback = null
+                  webView?.let { wv ->
+                      wv.url?.let { if (Uri.parse(it).scheme?.startsWith("http") == true) AppState.rememberUrl(it) }
+                      wv.stopLoading()
+                      wv.destroy()
+                  }
+                  webView = null
+                  overlay = null
+                  root = null
+                  try {
+                      presentation?.dismiss()
+                  } catch (e: Exception) {
+                      Log.w(TAG, "dismiss", e)
+                  }
+                  presentation = null
+                  virtualDisplay?.release()
+                  virtualDisplay = null
+              }
+          }
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/xml/automotive_app_desc.xml')"
+          cat > 'app/src/main/res/xml/automotive_app_desc.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <automotiveApp>
+              <uses name="template" />
+          </automotiveApp>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/values/strings.xml')"
+          cat > 'app/src/main/res/values/strings.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Araç Ekran Video</string>
+
+              <string name="lock_moving">Araç hareket halinde\n\nGüvenliğiniz için görüntü kapatıldı.\nSes devam ediyor. Araç durunca görüntü geri gelir.</string>
+              <string name="lock_unknown">Araç hızı okunamıyor\n\nGüvenlik için görüntü kapalı.\nTelefonda uygulamayı açıp konum iznini verin\nve aracın açık alanda (GPS çeken yerde) durduğundan emin olun.</string>
+              <string name="lock_waiting">Araç durdu, görüntü açılıyor…</string>
+
+              <string name="car_back">Geri</string>
+              <string name="car_home">Ana sayfa</string>
+              <string name="car_sites">Siteler</string>
+              <string name="car_reload">Yenile</string>
+              <string name="car_sites_title">Siteler</string>
+          </resources>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/layout/activity_main.xml')"
+          cat > 'app/src/main/res/layout/activity_main.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:fillViewport="true">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="vertical"
+                  android:padding="16dp">
+
+                  <TextView
+                      android:id="@+id/status"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:background="#EEF2F7"
+                      android:padding="12dp"
+                      android:textSize="16sp" />
+
+                  <Button
+                      android:id="@+id/btnPermission"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="8dp"
+                      android:text="Konum iznini ver (park kilidi için gerekli)" />
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:text="Araç ekranında aç"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+
+                  <EditText
+                      android:id="@+id/urlInput"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:hint="Adres veya arama (örn. youtube.com)"
+                      android:imeOptions="actionGo"
+                      android:inputType="textUri"
+                      android:singleLine="true" />
+
+                  <Button
+                      android:id="@+id/btnOpen"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="Araç ekranında aç" />
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:text="Kayıtlı siteler (ilki ana sayfadır)"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+
+                  <LinearLayout
+                      android:id="@+id/bookmarkList"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:orientation="vertical" />
+
+                  <EditText
+                      android:id="@+id/bmName"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="8dp"
+                      android:hint="Site adı"
+                      android:singleLine="true" />
+
+                  <EditText
+                      android:id="@+id/bmUrl"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:hint="Site adresi"
+                      android:inputType="textUri"
+                      android:singleLine="true" />
+
+                  <Button
+                      android:id="@+id/btnAddBookmark"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="Siteyi ekle" />
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:text="Görünüm"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+
+                  <RadioGroup
+                      android:id="@+id/zoomGroup"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:orientation="horizontal">
+
+                      <RadioButton
+                          android:id="@+id/zoom100"
+                          android:layout_width="0dp"
+                          android:layout_height="wrap_content"
+                          android:layout_weight="1"
+                          android:text="Normal" />
+
+                      <RadioButton
+                          android:id="@+id/zoom125"
+                          android:layout_width="0dp"
+                          android:layout_height="wrap_content"
+                          android:layout_weight="1"
+                          android:text="Büyük" />
+
+                      <RadioButton
+                          android:id="@+id/zoom150"
+                          android:layout_width="0dp"
+                          android:layout_height="wrap_content"
+                          android:layout_weight="1"
+                          android:text="Çok büyük" />
+                  </RadioGroup>
+
+                  <CheckBox
+                      android:id="@+id/desktopMode"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="Masaüstü sitesi modu" />
+
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:text="İlk kurulum (bir kez)"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:lineSpacingExtra="4dp"
+                      android:text="1. Telefonda Ayarlar → Bağlı cihazlar → Android Auto'yu açın (bazı telefonlarda Ayarlar'da 'Android Auto' diye arayın).\n2. En alttaki 'Sürüm' yazısına 10 kez dokunun, çıkan uyarıyı onaylayın.\n3. Sağ üstteki üç noktaya → 'Geliştirici ayarları' → 'Bilinmeyen kaynaklar' kutusunu işaretleyin.\n4. Android Auto ayarlarında 'Başlatıcıyı özelleştir' bölümünde 'Araç Ekran Video' işaretli olsun.\n5. Telefonu araca bağlayın, araç ekranında 'Araç Ekran Video' simgesine dokunun.\n\nBu ayarlar sadece telefonda yapılır. Araca hiçbir şey yüklenmez, araç yazılımı değişmez." />
+
+                  <Button
+                      android:id="@+id/btnOpenAA"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="8dp"
+                      android:text="Android Auto ayarlarını aç" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:textColor="#B71C1C"
+                      android:text="Güvenlik: Görüntü sadece araç dururken gösterilir. Araç hareket edince görüntü otomatik kapanır, ses devam eder." />
+              </LinearLayout>
+          </ScrollView>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_back.xml')"
+          cat > 'app/src/main/res/drawable/ic_back.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z" />
+          </vector>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_down.xml')"
+          cat > 'app/src/main/res/drawable/ic_down.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M7.41,8.59L12,13.17l4.59,-4.58L18,10l-6,6 -6,-6z" />
+          </vector>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_home.xml')"
+          cat > 'app/src/main/res/drawable/ic_home.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z" />
+          </vector>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_launcher.xml')"
+          cat > 'app/src/main/res/drawable/ic_launcher.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#1E3A5F" android:pathData="M0,0h108v108h-108z" />
+              <!-- ekran -->
+              <path android:fillColor="#FFFFFF" android:pathData="M22,30h64a6,6 0,0 1,6 6v34a6,6 0,0 1,-6 6h-64a6,6 0,0 1,-6 -6v-34a6,6 0,0 1,6 -6z" />
+              <!-- oynat -->
+              <path android:fillColor="#E53935" android:pathData="M47,42l18,11l-18,11z" />
+              <!-- ayak -->
+              <path android:fillColor="#FFFFFF" android:pathData="M44,80h20v5h-20z" />
+          </vector>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_refresh.xml')"
+          cat > 'app/src/main/res/drawable/ic_refresh.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M17.65,6.35C16.2,4.9 14.21,4 12,4c-4.42,0 -7.99,3.58 -7.99,8s3.57,8 7.99,8c3.73,0 6.84,-2.55 7.73,-6h-2.08c-0.82,2.33 -3.04,4 -5.65,4 -3.31,0 -6,-2.69 -6,-6s2.69,-6 6,-6c1.66,0 3.14,0.69 4.22,1.78L13,11h7V4l-2.35,2.35z" />
+          </vector>
+          KODSONU
+          mkdir -p "$(dirname 'app/src/main/res/drawable/ic_up.xml')"
+          cat > 'app/src/main/res/drawable/ic_up.xml' <<'KODSONU'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M7.41,15.41L12,10.83l4.59,4.58L18,14l-6,-6 -6,6z" />
+          </vector>
+          KODSONU
+
       - name: APK derle
+        working-directory: proje
         run: gradle --no-daemon assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:
           name: AracEkranVideo-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: proje/app/build/outputs/apk/debug/*.apk
