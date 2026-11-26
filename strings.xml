@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Araç Ekran Video</string>
+
+    <string name="lock_moving">Araç hareket halinde\n\nGüvenliğiniz için görüntü kapatıldı.\nSes devam ediyor. Araç durunca görüntü geri gelir.</string>
+    <string name="lock_unknown">Araç hızı okunamıyor\n\nGüvenlik için görüntü kapalı.\nTelefonda uygulamayı açıp konum iznini verin\nve aracın açık alanda (GPS çeken yerde) durduğundan emin olun.</string>
+    <string name="lock_waiting">Araç durdu, görüntü açılıyor…</string>
+
+    <string name="car_back">Geri</string>
+    <string name="car_home">Ana sayfa</string>
+    <string name="car_sites">Siteler</string>
+    <string name="car_reload">Yenile</string>
+    <string name="car_sites_title">Siteler</string>
+</resources>

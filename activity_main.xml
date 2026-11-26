@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#EEF2F7"
+            android:padding="12dp"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnPermission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Konum iznini ver (park kilidi için gerekli)" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Araç ekranında aç"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/urlInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Adres veya arama (örn. youtube.com)"
+            android:imeOptions="actionGo"
+            android:inputType="textUri"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/btnOpen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Araç ekranında aç" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Kayıtlı siteler (ilki ana sayfadır)"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/bookmarkList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <EditText
+            android:id="@+id/bmName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Site adı"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/bmUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Site adresi"
+            android:inputType="textUri"
+            android:singleLine="true" />
+
+        <Button
+            android:id="@+id/btnAddBookmark"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Siteyi ekle" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="Görünüm"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <RadioGroup
+            android:id="@+id/zoomGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/zoom100"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Normal" />
+
+            <RadioButton
+                android:id="@+id/zoom125"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Büyük" />
+
+            <RadioButton
+                android:id="@+id/zoom150"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Çok büyük" />
+        </RadioGroup>
+
+        <CheckBox
+            android:id="@+id/desktopMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Masaüstü sitesi modu" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="İlk kurulum (bir kez)"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="4dp"
+            android:text="1. Telefonda Ayarlar → Bağlı cihazlar → Android Auto'yu açın (bazı telefonlarda Ayarlar'da 'Android Auto' diye arayın).\n2. En alttaki 'Sürüm' yazısına 10 kez dokunun, çıkan uyarıyı onaylayın.\n3. Sağ üstteki üç noktaya → 'Geliştirici ayarları' → 'Bilinmeyen kaynaklar' kutusunu işaretleyin.\n4. Android Auto ayarlarında 'Başlatıcıyı özelleştir' bölümünde 'Araç Ekran Video' işaretli olsun.\n5. Telefonu araca bağlayın, araç ekranında 'Araç Ekran Video' simgesine dokunun.\n\nBu ayarlar sadece telefonda yapılır. Araca hiçbir şey yüklenmez, araç yazılımı değişmez." />
+
+        <Button
+            android:id="@+id/btnOpenAA"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Android Auto ayarlarını aç" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:textColor="#B71C1C"
+            android:text="Güvenlik: Görüntü sadece araç dururken gösterilir. Araç hareket edince görüntü otomatik kapanır, ses devam eder." />
+    </LinearLayout>
+</ScrollView>
